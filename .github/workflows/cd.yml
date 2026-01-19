@@ -1,0 +1,40 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd "${{ secrets.VPS_PATH }}"
+
+            git fetch --all
+            git reset --hard origin/main
+
+            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
+            php bin/console doctrine:migrations:migrate -n --allow-no-migration
+            php bin/console cache:clear --env=prod
+            php bin/console cache:warmup --env=prod
+
+            sudo systemctl reload nginx || true
+            sudo systemctl restart php8.3-fpm || true
